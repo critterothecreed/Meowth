@@ -3,6 +3,7 @@
 config.json
 data/serverdict_backup
 data/serverdict
+nohup.out
 
 logs/
 __pychache__/
