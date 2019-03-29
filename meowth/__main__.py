@@ -4549,7 +4549,6 @@ async def _eggassume(args, raid_channel, author=None):
     egglevel = eggdetails['egglevel']
     manual_timer = eggdetails['manual_timer']
     weather = eggdetails.get('weather', None)
-    egg_report = await report_channel.get_message(eggdetails['raidreport'])
     raid_message = await raid_channel.get_message(eggdetails['raidmessage'])
     entered_raid = re.sub('[\\@]', '', args.lower().lstrip('assume').lstrip(' '))
     entered_raid = get_name(entered_raid).lower() if entered_raid.isdigit() else entered_raid
@@ -4596,6 +4595,7 @@ async def _eggassume(args, raid_channel, author=None):
     except discord.errors.NotFound:
         raid_message = None
     try:
+        egg_report = await report_channel.get_message(eggdetails['raidreport'])
         await egg_report.edit(new_content=egg_report.content, embed=raid_embed, content=egg_report.content)
         egg_report = egg_report.id
     except discord.errors.NotFound:
@@ -4659,11 +4659,14 @@ async def _eggtoraid(entered_raid, raid_channel, author=None):
     archive = eggdetails.get('archive',False)
     meetup = eggdetails.get('meetup',{})
     if not author:
-        try:
-            raid_messageauthor = raid_message.mentions[0]
-        except IndexError:
-            raid_messageauthor = ('<@' + raid_message.raw_mentions[0]) + '>'
-            logger.info('Hatching Mention Failed - Trying alternative method: channel: {} (id: {}) - server: {} | Attempted mention: {}...'.format(raid_channel.name, raid_channel.id, raid_channel.guild.name, raid_message.content[:125]))
+        if len(raid_message.mentions) > 0:
+            try:
+                raid_messageauthor = raid_message.mentions[0]
+            except IndexError:
+                raid_messageauthor = ('<@' + raid_message.raw_mentions[0]) + '>'
+                logger.info('Hatching Mention Failed - Trying alternative method: channel: {} (id: {}) - server: {} | Attempted mention: {}...'.format(raid_channel.name, raid_channel.id, raid_channel.guild.name, raid_message.content[:125]))
+        else:
+            raid_messageauthor = raid_message.guild.get_member(eggdetails['author_id'])
     else:
         raid_messageauthor = author
     raid_match = True if entered_raid in get_raidlist() else False
