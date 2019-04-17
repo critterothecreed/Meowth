@@ -3561,8 +3561,9 @@ async def changeraid(ctx, newraid):
             boss_list.append((((p_name + ' (') + str(p)) + ') ') + ''.join(p_type))
         raid_img_url = 'https://raw.githubusercontent.com/FoglyOgly/Meowth/discordpy-v1/images/eggs/{}?cache=1'.format(str(egg_img))
         raid_message = await channel.get_message(guild_dict[guild.id]['raidchannel_dict'][channel.id]['raidmessage'])
-        report_channel = Meowth.get_channel(raid_message.raw_channel_mentions[0])
-        report_message = await report_channel.get_message(guild_dict[guild.id]['raidchannel_dict'][channel.id]['raidreport'])
+        if len(raid_message.raw_channel_mentions):
+            report_channel = Meowth.get_channel(raid_message.raw_channel_mentions[0])
+            report_message = await report_channel.get_message(guild_dict[guild.id]['raidchannel_dict'][channel.id]['raidreport'])
         oldembed = raid_message.embeds[0]
         raid_embed = discord.Embed(title=oldembed.title, url=oldembed.url, colour=message.guild.me.colour)
         if len(raid_info['raid_eggs'][newraid]['pokemon']) > 1:
@@ -3582,15 +3583,18 @@ async def changeraid(ctx, newraid):
                 raid_embed.add_field(name=field.name, value=field.value, inline=field.inline)
         if changefrom == "egg":
             raid_message.content = re.sub(_('level\s\d'), _('Level {}').format(newraid), raid_message.content, flags=re.IGNORECASE)
-            report_message.content = re.sub(_('level\s\d'), _('Level {}').format(newraid), report_message.content, flags=re.IGNORECASE)
+            if len(raid_message.raw_channel_mentions):
+                report_message.content = re.sub(_('level\s\d'), _('Level {}').format(newraid), report_message.content, flags=re.IGNORECASE)
         else:
             raid_message.content = re.sub(_('\s.*\sraid\sreported'),_('Meowth! Level {} reported').format(newraid), raid_message.content, flags=re.IGNORECASE)
-            report_message.content = re.sub(_('\s.*\sraid\sreported'),_('Meowth! Level {}').format(newraid), report_message.content, flags=re.IGNORECASE)
+            if len(raid_message.raw_channel_mentions):
+                report_message.content = re.sub(_('\s.*\sraid\sreported'),_('Meowth! Level {}').format(newraid), report_message.content, flags=re.IGNORECASE)
         await raid_message.edit(new_content=raid_message.content, embed=raid_embed, content=raid_message.content)
-        try:
-            await report_message.edit(new_content=report_message.content, embed=raid_embed, content=report_message.content)
-        except (discord.errors.NotFound, AttributeError):
-            pass
+        if len(raid_message.raw_channel_mentions):
+            try:
+                await report_message.edit(new_content=report_message.content, embed=raid_embed, content=report_message.content)
+            except (discord.errors.NotFound, AttributeError):
+                pass
         await channel.edit(name=raid_channel_name, topic=channel.topic)
     elif newraid and not newraid.isdigit():
         # What a hack, subtract raidtime from exp time because _eggtoraid will add it back
@@ -4774,6 +4778,7 @@ async def _eggtoraid(entered_raid, raid_channel, author=None):
         ctrs_dict = eggdetails.get('ctrs_dict',{})
         ctrsmessage_id = eggdetails.get('ctrsmessage', None)
     guild_dict[raid_channel.guild.id]['raidchannel_dict'][raid_channel.id] = {
+        'author_id': guild_dict[raid_channel.guild.id]['raidchannel_dict'][raid_channel.id]['author_id'],
         'reportcity': reportcitychannel.id,
         'trainer_dict': trainer_dict,
         'exp': raidexp,
@@ -5611,7 +5616,8 @@ async def recover(ctx):
             if message.author.id == guild.me.id:
                 c = _('Coordinate here')
                 if c in message.content:
-                    reportchannel = message.raw_channel_mentions[0]
+                    if len(message.raw_channel_mentions) > 0:
+                        reportchannel = message.raw_channel_mentions[0]
                     raidmessage = message
                     break
         if egg:
@@ -5839,8 +5845,13 @@ async def duplicate(ctx):
                 await channel.send(_('Duplicate Confirmed'))
                 logger.info((('Duplicate Report - Channel Expired - ' + channel.name) + ' - Last Report by ') + author.name)
                 raidmsg = await channel.get_message(rc_d['raidmessage'])
-                #reporter = raidmsg.mentions[0]
-                reporter = channel.guild.get_member(rc_d['author_id'])
+                if len(raidmsg.mentions):
+                    reporter = raidmsg.mentions[0]
+                elif ('author_id' in rc_d):
+                    reporter = channel.guild.get_member(rc_d['author_id'])
+                else:
+                    await expire_channel(channel)
+                    return
                 if 'egg' in raidmsg.content:
                     egg_reports = guild_dict[guild.id]['trainers'][reporter.id]['egg_reports']
                     guild_dict[guild.id]['trainers'][reporter.id]['egg_reports'] = egg_reports - 1
