@@ -4,6 +4,7 @@ config.json
 data/serverdict_backup
 data/serverdict
 nohup.out
+data/freemove_roles.json
 
 logs/
 __pychache__/

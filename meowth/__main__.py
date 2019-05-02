@@ -1,4 +1,5 @@
 
+import re
 import asyncio
 import copy
 import datetime
@@ -14,6 +15,9 @@ import tempfile
 import textwrap
 import time
 import traceback
+#TODO replace http.client usage with aiohttp
+import http.client
+from lxml import html
 
 from contextlib import redirect_stdout
 from io import BytesIO
@@ -75,7 +79,6 @@ except OSError:
 
 guild_dict = Meowth.guild_dict
 
-
 config = {}
 pkmn_info = {}
 type_chart = {}
@@ -99,6 +102,8 @@ def load_config():
     global type_chart
     global type_list
     global raid_info
+    global freemove_roles
+    global freemove_roles_file
     # Load configuration
     with open('config.json', 'r') as fd:
         config = json.load(fd)
@@ -120,6 +125,17 @@ def load_config():
         type_chart = json.load(fd)
     with open(os.path.join('data', 'type_list.json'), 'r') as fd:
         type_list = json.load(fd)
+    if "freemove_roles_file" in config.keys():
+        freemove_roles_file = config["freemove_roles_file"]
+    else:
+        freemove_roles_file = "freemove_roles.json"
+    if os.path.isfile(os.path.join('data', freemove_roles_file)):
+        with open(os.path.join('data', freemove_roles_file), 'r') as fd:
+            freemove_roles = json.load(fd)
+    else:
+        freemove_roles = []
+        with open(os.path.join('data', freemove_roles_file), 'w') as fd:
+            json.dump(freemove_roles, fd)
     # Set spelling dictionary to our list of Pokemon
     pkmn_match.set_list(pkmn_info['pokemon_list'])
     return (pokemon_path_source, raid_path_source)
@@ -1031,6 +1047,22 @@ async def message_cleanup(loop=True):
         await asyncio.sleep(600)
         continue
 
+async def run_dailies(loop=True):
+    while (not Meowth.is_closed()):
+        now = time.time()
+        for daily in daily_tasks:
+            target_time = time.strptime(daily["time"] + time.strftime(" %d %b %Y"), "%H:%M %d %b %Y")
+            target_secs = time.mktime(target_time)
+            if "lastrun" in daily.keys():
+                if now - daily["lastrun"] < 86400:
+                    #print("Skipping daily task that has already been run today")
+                    continue
+            if now > target_secs and now - target_secs < 600:#only allow 10 minutes interval to prevent mutiple runs due to bot restarts
+                print("[{0}]Running daily task '{1}'".format(time.strftime("%c"),daily["name"]))
+                daily["lastrun"] = now
+                await daily["callback"]()
+        await asyncio.sleep(60)
+
 async def _print(owner, message):
     if 'launcher' in sys.argv[1:]:
         if 'debug' not in sys.argv[1:]:
@@ -1043,6 +1075,7 @@ async def maint_start():
 #        event_loop.create_task(guild_cleanup())
         event_loop.create_task(channel_cleanup())
         event_loop.create_task(message_cleanup())
+        event_loop.create_task(run_dailies())
         logger.info('Maintenance Tasks Started')
     except KeyboardInterrupt as e:
         tasks.cancel()
@@ -3465,6 +3498,164 @@ async def raid_json(ctx, level=None, *, newlist=None):
         else:
             return await ctx.channel.send(_(" I'm not sure what went wrong, but configuration is cancelled!"))
 
+@Meowth.command(name='poll_raids')
+@checks.is_owner()
+async def poll_raids(ctx, *, user=None, type=None):
+    await poll_silphroad_for_boss_list()
+
+async def poll_silphroad_for_boss_list():
+    SILPH_ROAD_DOMAIN = "thesilphroad.com"
+    SILPH_ROAD_BOSS_PATH = "/raid-bosses"
+    GROUP_MAPPING = {
+        0 : 'EX',
+        1 : '5',
+        2 : '4',
+        3 : '3',
+        4 : '2',
+        5 : '1'
+        }
+    conn = http.client.HTTPSConnection(SILPH_ROAD_DOMAIN)
+    conn.request("GET", SILPH_ROAD_BOSS_PATH)
+    r1 = conn.getresponse()
+    data1 = r1.read()
+    tree = html.fromstring(data1)
+    boss_divs = tree.xpath('//div[@class="raid-boss-tier-wrap" or @class="raid-boss-tier"]')
+    group = -1
+    boss_list = dict()
+    for i in range(len(boss_divs)):
+        if len(boss_divs[i].xpath('descendant-or-self::div[@class="raid-boss-tier-wrap"]')):
+            group += 1
+            boss_list[GROUP_MAPPING[group]] = []
+        else:
+            long_names = boss_divs[i].xpath('descendant::div[@class="boss-name"]/text()')
+            if len(long_names):
+                long_name = long_names[0]
+                short_name = long_name.replace("Alolan ","")
+                short_name = re.sub('\s*\(.*\)','',short_name).lower()
+                boss_list[GROUP_MAPPING[group]].append(get_number(short_name))
+    if len(boss_list) != 6:
+        return 0
+    with open(os.path.join('data', 'raid_info.json'), 'r') as fd:
+        data = json.load(fd)
+    for level in boss_list.keys():
+        data['raid_eggs'][level]['pokemon'] = boss_list[level]
+    with open(os.path.join('data', 'raid_info.json'), 'w') as fd:
+        json.dump(data, fd, indent=2, separators=(', ', ': '))
+    load_config()
+
+daily_tasks = [{'name':'Poll Silphroad raid-bosses','callback':poll_silphroad_for_boss_list, 'time':'05:00'}]
+
+@Meowth.command()
+@commands.has_permissions(manage_guild=True)
+async def allow_role(ctx, rname):
+    all_roles = ctx.guild.roles
+    del all_roles[0] #getting rid of everyone
+    rnames = [role.name for role in all_roles]
+    await ctx.send('Looking for role "{0}" in {1}'.format(rname, str(rnames)))
+    if rname in rnames:
+        role = all_roles[rnames.index(rname)]
+        await ctx.send('Found role with id {0} having name "{1}"'.format(role.id, rname))
+        if role.id in freemove_roles:
+            await ctx.send('Freemove is already allowed for role "{}"'.format(rname))
+        else:
+            await ctx.send('Have enabled freemove for role "{}"'.format(rname))
+            freemove_roles.append(role.id)
+            with open(os.path.join('data', freemove_roles_file), 'w') as fd:
+                json.dump(freemove_roles, fd, indent=2, separators=(', ', ': '))
+    else:
+        await ctx.send('"{}" is an invalid role name'.format(rname))
+
+@Meowth.command()
+@commands.has_permissions(manage_guild=True)
+async def disallow_role(ctx, rname):
+    all_roles = ctx.guild.roles
+    del all_roles[0] #getting rid of everyone
+    rnames = [role.name for role in all_roles]
+    await ctx.send('Looking for role "{0}" in {1}'.format(rname, str(rnames)))
+    if rname in rnames:
+        role = all_roles[rnames.index(rname)]
+        await ctx.send('Found role with id {0} having name "{1}"'.format(role.id, rname))
+        if not role.id in freemove_roles:
+            await ctx.send('Freemove is not allowed for role "{}" anyway'.format(rname))
+        else:
+            freemove_roles.remove(role.id)
+            with open(os.path.join('data', freemove_roles_file), 'w') as fd:
+                json.dump(freemove_roles, fd, indent=2, separators=(', ', ': '))
+            await ctx.send('Have disabled freemove for role "{}"'.format(rname))
+    else:
+        await ctx.send('"{}" is an invalid role name'.format(rname))
+
+@Meowth.command(name="freemove_roles")
+async def free_move_roles(ctx):
+    out_str = "Freemove is allowed for the following roles:"
+    for r_id in freemove_roles:
+        out_str += " " + ctx.guild.get_role(r_id).name
+    await ctx.send(out_str)
+
+@Meowth.command(name="joinrole")
+async def cmd_joinrole(ctx, rname):
+    #ctx.send('Processing command joinrole')
+    rnames = [role.name for role in ctx.guild.roles]
+    if rname in rnames:
+        freemove_rnames = [ctx.guild.get_role(r_id).name for r_id in freemove_roles]
+        if rname in freemove_rnames:
+            role = ctx.guild.get_role(freemove_roles[freemove_rnames.index(rname)])
+            user_roles = ctx.author.roles
+            #del user_roles[0] #remove everyone
+            if role.id in [r.id for r in user_roles]:
+                await ctx.send('You already have the role "{}"'.format(rname))
+            else:
+                try:
+                    await ctx.author.add_roles(role)
+                    await ctx.send('You have succesfully been assigned the role "{}"'.format(rname))
+                except discord.errors.Forbidden:
+                    await ctx.send("I do not have server permission to assign roles")
+                except discord.errors.HTTPException:
+                    await ctx.send("Encountered communication problem with server. Please re-try later")
+                except:
+                    print("Unexpected error:", sys.exc_info()[0])
+        else:
+            await ctx.send('Freemove is NOT allowed for role "{}"!!!'.format(rname))
+    else:
+        await ctx.send('Role with name "{}" does not exist'.format(rname))
+
+@Meowth.command(name="leaverole")
+async def cmd_leaverole(ctx, rname):
+    #ctx.send('Processing command joinrole')
+    rnames = [role.name for role in ctx.guild.roles]
+    if rname in rnames:
+        freemove_rnames = [ctx.guild.get_role(r_id).name for r_id in freemove_roles]
+        if rname in freemove_rnames:
+            role = ctx.guild.get_role(freemove_roles[freemove_rnames.index(rname)])
+            user_roles = ctx.author.roles
+            #del user_roles[0] #remove everyone
+            if not role.id in [r.id for r in user_roles]:
+                await ctx.send('You don\'t have the role "{}"'.format(rname))
+            else:
+                try:
+                    await ctx.author.remove_roles(role)
+                    await ctx.send('The role "{}" has succesfully been removed from you'.format(rname))
+                except discord.errors.Forbidden:
+                    await ctx.send("I do not have server permission to manage roles")
+                except discord.errors.HTTPException:
+                    await ctx.send("Encountered communication problem with server. Please re-try later")
+                except:
+                    print("Unexpected error:", sys.exc_info()[0])
+        else:
+            await ctx.send('Freemove is NOT allowed for role "{}"!!!'.format(rname))
+    else:
+        await ctx.send('Role with name "{}" does not exist'.format(rname))
+
+@Meowth.command(name="my_freeroles")
+async def cmd_freeroles(ctx):
+    user_roles = ctx.author.roles
+    del user_roles[0]#discount everyone
+    str_out = "Your current freemove roles:"
+    for role in user_roles:
+        if role.id in freemove_roles:
+            str_out += " " + role.name
+    await ctx.channel.send(str_out)
+
 @Meowth.command()
 @commands.has_permissions(manage_guild=True)
 async def reset_board(ctx, *, user=None, type=None):
@@ -5357,15 +5548,16 @@ async def _timerset(raidchannel, exptime):
     await raidchannel.edit(topic=topicstr)
     report_channel = Meowth.get_channel(guild_dict[guild.id]['raidchannel_dict'][raidchannel.id]['reportcity'])
     raidmsg = await raidchannel.get_message(guild_dict[guild.id]['raidchannel_dict'][raidchannel.id]['raidmessage'])
-    reportmsg = await report_channel.get_message(guild_dict[guild.id]['raidchannel_dict'][raidchannel.id]['raidreport'])
     embed = raidmsg.embeds[0]
     embed.set_field_at(3, name=embed.fields[3].name, value=endtime, inline=True)
+    if guild_dict[guild.id]['raidchannel_dict'][raidchannel.id]['raidreport']:
+        try:
+            reportmsg = await report_channel.get_message(guild_dict[guild.id]['raidchannel_dict'][raidchannel.id]['raidreport'])
+            await reportmsg.edit(content=reportmsg.content,embed=embed)
+        except discord.errors.NotFound:
+            pass
     try:
         await raidmsg.edit(content=raidmsg.content,embed=embed)
-    except discord.errors.NotFound:
-        pass
-    try:
-        await reportmsg.edit(content=reportmsg.content,embed=embed)
     except discord.errors.NotFound:
         pass
     raidchannel = Meowth.get_channel(raidchannel.id)

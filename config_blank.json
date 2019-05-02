@@ -52,6 +52,7 @@
     "dark"     : ":dark:",
     "steel"    : ":steel:",
     "fairy"    : ":fairy:"
-}
+},
 
+"freemove_roles_file": "freemove_roles.json"
 }
