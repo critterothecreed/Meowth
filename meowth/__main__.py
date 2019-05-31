@@ -15,6 +15,7 @@ import tempfile
 import textwrap
 import time
 import traceback
+import random
 #TODO replace http.client usage with aiohttp
 import http.client
 from lxml import html
@@ -161,6 +162,8 @@ for ext in default_exts:
     else:
         if 'debug' in sys.argv[1:]:
             print(f'Loaded {ext} extension.')
+
+random.seed()
 
 @Meowth.command(name='load')
 @checks.is_owner()
@@ -3585,7 +3588,7 @@ async def disallow_role(ctx, rname):
     else:
         await ctx.send('"{}" is an invalid role name'.format(rname))
 
-@Meowth.command(name="freemove_roles")
+@Meowth.command(name="freeroles")
 async def free_move_roles(ctx):
     out_str = "Freemove is allowed for the following roles:"
     for r_id in freemove_roles:
@@ -3646,7 +3649,7 @@ async def cmd_leaverole(ctx, rname):
     else:
         await ctx.send('Role with name "{}" does not exist'.format(rname))
 
-@Meowth.command(name="my_freeroles")
+@Meowth.command(name="myroles")
 async def cmd_freeroles(ctx):
     user_roles = ctx.author.roles
     del user_roles[0]#discount everyone
@@ -7613,6 +7616,13 @@ async def wilds(ctx):
     listmsg = _('****')
     listmsg += await _wildlist(ctx)
     await ctx.channel.send(embed=discord.Embed(colour=ctx.guild.me.colour, description=listmsg))
+
+@Meowth.command()
+async def flip(ctx):
+    if random.randint(0, 1):
+        await ctx.channel.send("You got Heads!");
+    else:
+        await ctx.channel.send("You got Tail!");
 
 async def _wildlist(ctx):
     wild_dict = copy.deepcopy(guild_dict[ctx.guild.id].get('wildreport_dict',{}))
